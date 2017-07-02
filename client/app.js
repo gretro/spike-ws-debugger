@@ -1,7 +1,59 @@
 (() => {
+  function postInspectorCreated(id, socket) {
+    // TODO: Retry until the content script is ready.
+    window.postMessage({
+      type: 'WSInspector.CREATE',
+      payload: {
+        socket: {
+          id,
+          status: socket.readyState,
+          url: socket.url
+        }
+      }
+    }, '*');
+  }
+
+  function postSocketStatusUpdate(id, status) {
+    window.postMessage({
+        type: 'WSInspector.STATUS_UPDATE',
+        payload: {
+          socket: {
+            id,
+            status
+          }
+        }
+      }, '*');
+  }
+
+  function postMessageSent(id, message) {
+    window.postMessage({
+      type: 'WSInspector.MSG_SEND',
+      payload: {
+        socket: {
+          id
+        },
+        data: message
+      }
+    }, '*');
+  }
+
+  function postMessageReceived(id, message) {
+    window.postMessage({
+      type: 'WSInspector.MSG_RECEIVED',
+      payload: {
+        socket: {
+          id
+        },
+        data: message
+      }
+    }, '*');
+  }
+
   function createWebSocketInspector(socket) {
-    const boundSocketClose = socket.close.bind(socket);
-    const boundSocketSend = socket.send.bind(socket);
+    const socketId = 1; // Implement a real ID mechanism.
+
+    const port = chrome.runtime.connect('WSInspect');
+    port.postMessage({ type: 'PING' });
 
     const wrapper = {
       // Wrapped properties
@@ -24,14 +76,20 @@
       CLOSED: socket.CLOSED,
 
       // Functions
-      get close() { return () => {
+      get close() { return (code, reason) => {
+        socket.close(code, reason);
 
-      }; },
-      get send() { return boundSocketSend; }
+        postSocketStatusUpdate(socketId, socket.CLOSING);
+      };},
+      get send() { return (data) => {
+        socket.send(data);
+
+        postMessageSent(socketId, data);
+      };}
     };
 
     socket.onopen = function inspectorOnOpen(evt) {
-      console.log('Connection established');
+      postSocketStatusUpdate(socketId, socket.readyState);
 
       if (wrapper.onopen) {
         wrapper.onopen(evt);
@@ -39,7 +97,7 @@
     };
 
     socket.onmessage = function inspectorOnMessage(evt) {
-      console.log('Message received through socket', evt.data);
+      postMessageReceived(socketId, evt.data);
 
       if (wrapper.onmessage) {
         wrapper.onmessage(evt);
@@ -54,6 +112,7 @@
       }
     };
 
+    postInspectorCreated(socketId, socket);
     return wrapper;
   }
 
@@ -63,7 +122,7 @@
   socket = createWebSocketInspector(socket);
 
   socket.onopen = function specificOnOpen() {
-    setInterval(() => {
+    interval = setInterval(() => {
       const msg = 'Echo echo echo!';
       socket.send(msg);
     }, 1000);
@@ -75,6 +134,12 @@
   };
 
   socket.onclose = function specificOnClose() {
+    if (interval) { 
+      clearInterval(interval);
+    }
+  };
+  
+  socket.onerror = function specificOnClose() {
     if (interval) { 
       clearInterval(interval);
     }
