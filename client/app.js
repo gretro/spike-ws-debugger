@@ -1,5 +1,6 @@
 (() => {
   function postInspectorCreated(id, socket) {
+    console.log('Inspector created', id);
     // TODO: Retry until the content script is ready.
     window.postMessage({
       type: 'WSInspector.CREATE',
@@ -14,6 +15,8 @@
   }
 
   function postSocketStatusUpdate(id, status) {
+    console.log('Websocket status update', status);
+
     window.postMessage({
         type: 'WSInspector.STATUS_UPDATE',
         payload: {
@@ -26,6 +29,8 @@
   }
 
   function postMessageSent(id, message) {
+    console.log('Message sent', message);
+
     window.postMessage({
       type: 'WSInspector.MSG_SEND',
       payload: {
@@ -38,6 +43,8 @@
   }
 
   function postMessageReceived(id, message) {
+    console.log('Message received', message);
+
     window.postMessage({
       type: 'WSInspector.MSG_RECEIVED',
       payload: {
@@ -49,77 +56,98 @@
     }, '*');
   }
 
+  function isFunction(obj) {
+    return !!(obj && obj.constructor && obj.call && obj.apply);
+  };
+
   function createWebSocketInspector(socket) {
     const socketId = 1; // Implement a real ID mechanism.
 
     const port = chrome.runtime.connect('WSInspect');
     port.postMessage({ type: 'PING' });
 
-    const wrapper = {
-      // Wrapped properties
-      get binaryType() { return socket.binaryType; },
-      set binaryType(value) { socket.binaryType = value; },
-      get bufferedAmount() { return socket.bufferedAmount; },
-      get extensions() { return socket.extensions },
-      set extensions(value) { socket.extensions = value },
-      onclose: null,
-      onerror: null,
-      onmessage: null,
-      onopen: null,
-      get protocol() { return socket.protocol },
-      get readyState() { return socket.readyState },
-
-      // Constants
-      CONNECTING: socket.CONNECTING,
-      OPEN: socket.OPEN,
-      CLOSING: socket.CLOSING,
-      CLOSED: socket.CLOSED,
-
-      // Functions
-      get close() { return (code, reason) => {
-        socket.close(code, reason);
-
-        postSocketStatusUpdate(socketId, socket.CLOSING);
-      };},
-      get send() { return (data) => {
-        socket.send(data);
-
-        postMessageSent(socketId, data);
-      };}
+    const socketCallbacks = {
+      onclose: socket.onclose,
+      onerror: socket.onerror,
+      onmessage: socket.onmessage,
+      onopen: socket.onopen
     };
+
+    const overriddenProperties = {
+      send: function inspectorSend(data) {
+        postMessageSent(socketId, data);
+
+        this.send(data);
+      }
+    }
 
     socket.onopen = function inspectorOnOpen(evt) {
       postSocketStatusUpdate(socketId, socket.readyState);
 
-      if (wrapper.onopen) {
-        wrapper.onopen(evt);
+      if (socketCallbacks.onopen) {
+        socketCallbacks.onopen(evt);
       }
     };
 
     socket.onmessage = function inspectorOnMessage(evt) {
       postMessageReceived(socketId, evt.data);
 
-      if (wrapper.onmessage) {
-        wrapper.onmessage(evt);
+      if (socketCallbacks.onmessage) {
+        socketCallbacks.onmessage(evt);
       }
     };
 
     socket.onclose = function inspectorOnMessage(evt) {
       console.log('Websocket has closed');
 
-      if (wrapper.onclose) {
-        wrapper.onclose(evt);
+      if (socketCallbacks.onclose) {
+        socketCallbacks.onclose(evt);
       }
     };
 
+    socket.onerror = function inspectorOnError(evt) {
+      console.log('Websocket error');
+
+      if (socketCallbacks.onerror) {
+        socketCallbacks.onerror(evt);
+      }
+    }
+
+    const socketProxy = new Proxy(socket, {
+      get: function(target, property) {
+        if (property in socketCallbacks) {
+          return socketCallbacks[property];
+        }
+
+        const value = property in overriddenProperties 
+          ? overriddenProperties[property] 
+          : target[property];
+        
+        if (isFunction(value)) {
+          return value.bind(target);
+        }
+
+        return value;
+      },
+      set: function(target, property, value) {
+        if (property in socketCallbacks) {
+          socketCallbacks[property] = value;
+        } else {
+          target[property] = value;
+        }
+      }
+    });
+
     postInspectorCreated(socketId, socket);
-    return wrapper;
+    return socketProxy;
   }
 
   let interval = null;
 
   let socket = new WebSocket('ws://localhost:8001');
   socket = createWebSocketInspector(socket);
+
+  console.log('URL', socket.url);
 
   socket.onopen = function specificOnOpen() {
     interval = setInterval(() => {
