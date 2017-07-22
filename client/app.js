@@ -63,9 +63,6 @@
   function createWebSocketInspector(socket) {
     const socketId = 1; // Implement a real ID mechanism.
 
-    const port = chrome.runtime.connect('WSInspect');
-    port.postMessage({ type: 'PING' });
-
     const socketCallbacks = {
       onclose: socket.onclose,
       onerror: socket.onerror,
