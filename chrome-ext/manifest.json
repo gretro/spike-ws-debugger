@@ -12,6 +12,12 @@
       "run_at": "document_start"
     }
   ],
+  "background": {
+    "scripts": [
+      "background/index.js"
+    ],
+    "persistent": false
+  },
   "minimum_chrome_version": "10.0",
   "devtools_page": "dev_tools/index.html"
 }
